@@ -6,3 +6,5 @@ venv/
 catalog.json
 config.json
 state.json
+
+.env

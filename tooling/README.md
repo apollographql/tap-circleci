@@ -1,5 +1,32 @@
 # Tooling
 
+## `plan-usage.py`
+
+### Setup
+
+```console
+python3 -m venv venv
+source venv/bin/activate
+pip install --upgrade pip
+pip install -e .
+
+python -m plan-usage --help
+```
+
+### `.env`
+
+```console
+echo 'CCI_PAT=' > .env
+```
+
+[Create a CCI PAT](https://circleci.com/docs/managing-api-tokens/#creating-a-personal-api-token) and save the output into your newly created `.env` file.
+
+### Example usage
+
+```console
+python -m plan-usage -a 2025-04-01T00:00:00Z -b 2025-05-01T00:00:00Z your-main-org-id another-org-id
+```
+
 ## `cancel-pipelines.py`
 
 CircleCI has no configurable timeout for Pipelines. Because of the inherent way this
@@ -66,7 +93,7 @@ Each value in `month 0`/`month 1`, is of the format `NNNN (F.F%)`. ie, a whole n
 ### Output
 
 ```s
-$ python3 tooling/plan-usage-parser.py tooling/plan-usage-example.csv                                                                   
+$ python3 tooling/plan-usage-parser.py tooling/plan-usage-example.csv
 ```
 
 ```csv
