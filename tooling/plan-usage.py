@@ -1,8 +1,13 @@
 import argparse
+import datetime
 import dotenv
+import json
 import os
+import re
 import requests
+import sys
 import time
+import traceback
 from urllib.parse import urlparse
 
 # https://circleci.com/docs/api/v2/index.html#tag/Usage
@@ -17,6 +22,41 @@ HEADERS = {
 }
 
 
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+
+def eprint(*args, color=bcolors.OKCYAN):
+    repacked_args = []
+
+    for arg in args:
+        if isinstance(arg, dict):
+            repacked_args.append(json_dumps(arg, indent=2))
+        else:
+            repacked_args.append(arg)
+
+    print(color, end="", file=sys.stderr)
+    print(*repacked_args, file=sys.stderr)
+    print(bcolors.ENDC, end="", file=sys.stderr)
+
+
+def json_dumps(x, **kwargs):
+    return json.dumps(
+        x,
+        **kwargs,
+        sort_keys=True,
+        default=lambda o: str(o)
+    )
+
+
 def create_report_request(org_id, shared_org_ids, start_date_time_string, end_date_time_string):
     payload = {
         "start": start_date_time_string,
@@ -24,7 +64,7 @@ def create_report_request(org_id, shared_org_ids, start_date_time_string, end_da
         "shared_org_ids": shared_org_ids
     }
 
-    print("create_report_request", payload)
+    eprint("create_report_request", payload)
 
     response = requests.post(
         f"https://circleci.com/api/v2/organizations/{org_id}/usage_export_job",
@@ -38,13 +78,13 @@ def create_report_request(org_id, shared_org_ids, start_date_time_string, end_da
 
     assert "failed" != response_json["state"]
 
-    print("create_report_request", response_json["state"])
+    eprint("create_report_request", response_json["state"])
 
     return response_json["usage_export_job_id"]
 
 
 def get_report_request(org_id, usage_export_job_id):
-    print("get_report_request:", usage_export_job_id)
+    eprint("get_report_request:", usage_export_job_id)
     response_json = None
 
     while True:
@@ -62,36 +102,45 @@ def get_report_request(org_id, usage_export_job_id):
         elif "failed" == response_json["state"]:
             raise Exception("Non success/continue status encountered", response_json)
 
-        print(f"get_report_request [{usage_export_job_id}]: Sleeping for 15 seconds while we wait (currently '{response_json['state']}') to be completed...")
+        eprint(f"get_report_request [{usage_export_job_id}]: Sleeping for 15 seconds while we wait (currently '{response_json['state']}') to be completed...")
         time.sleep(15)
 
-    print("get_report_request:", response_json["download_urls"])
+    eprint("get_report_request:", response_json["download_urls"])
     return response_json["download_urls"]
 
 
-def download_report(download_url):
+def download_report(start_date_time_string, end_date_time_string, download_url):
     response = requests.get(download_url, stream=True)
     response.raise_for_status()
 
-    file_name = urlparse(download_url).path.split('/')[-1]
-    file_path = f"/tmp/cci-usage--{file_name}"
+    s = re.sub(r"[:-]", "_", start_date_time_string)
+    e = re.sub(r"[:-]", "_", end_date_time_string)
 
-    print(f"download_report [{file_name}]: downloading...")
+    file_name = urlparse(download_url).path.split('/')[-1]
+    file_path = f"/tmp/cci-usage--{s}-{e}--{file_name}"
+
+    eprint(f"download_report [{file_name}]: downloading...")
     with open(file_path, mode="wb") as f:
         for chunk in response.iter_content(chunk_size=1024):
             # filter out keep-alive new chunks
             if chunk:
                 f.write(chunk)
 
-    print(f"download_report [{file_name}]:", file_path)
+    eprint(f"download_report [{file_name}]:", file_path)
     return file_path
-
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-a", "--start_date_time_string", type=str)
-    parser.add_argument("-b", "--end_date_time_string", type=str)
+    parser.add_argument("-a", "--start_date_time_string", type=str, help="YYYY-MM-DDT00:00:00Z")
+    parser.add_argument(
+        "-b",
+        "--end_date_time_string",
+        type=str,
+        help="YYYY-MM-DDT00:00:00Z",
+        default=datetime.datetime.now().strftime("%Y-%m-%dT00:00:00Z")
+    )
+    parser.add_argument("--verbose_format", action='store_true')
     parser.add_argument("org_id")
     parser.add_argument("shared_org_ids", nargs="*", default=[])
     args = parser.parse_args()
@@ -108,8 +157,22 @@ def main():
         usage_export_job_id
     )
 
-    for download_url in download_urls:
-        download_report(download_url)
+    report_local_paths = [
+        download_report(
+            args.start_date_time_string,
+            args.end_date_time_string,
+            download_url
+        )
+        for download_url in download_urls
+    ]
+
+    print(report_local_paths)
+
+    return 0
 
 
-main()
+try:
+    sys.exit(main())
+except Exception:
+    eprint(traceback.format_exc(), color=bcolors.FAIL)
+    sys.exit(-1)
