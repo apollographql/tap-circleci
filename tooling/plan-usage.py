@@ -1,6 +1,8 @@
 import argparse
+import csv
 import datetime
 import dotenv
+import gzip
 import json
 import os
 import re
@@ -20,6 +22,57 @@ HEADERS = {
     "content-type": "application/json",
     "Circle-Token": os.getenv('CCI_PAT')
 }
+
+EXPECTED_CSV_HEADERS = [
+    "ORGANIZATION_ID",
+    "ORGANIZATION_NAME",
+    "ORGANIZATION_CREATED_DATE",
+    "PROJECT_ID",
+    "PROJECT_NAME",
+    "PROJECT_CREATED_DATE",
+    "LAST_BUILD_FINISHED_AT",
+    "VCS_NAME",
+    "VCS_URL",
+    "VCS_BRANCH",
+    "PIPELINE_ID",
+    "PIPELINE_CREATED_AT",
+    "PIPELINE_NUMBER",
+    "IS_UNREGISTERED_USER",
+    "PIPELINE_TRIGGER_SOURCE",
+    "PIPELINE_TRIGGER_USER_ID",
+    "WORKFLOW_ID",
+    "WORKFLOW_NAME",
+    "WORKFLOW_FIRST_JOB_QUEUED_AT",
+    "WORKFLOW_FIRST_JOB_STARTED_AT",
+    "WORKFLOW_STOPPED_AT",
+    "IS_WORKFLOW_SUCCESSFUL",
+    "JOB_NAME",
+    "JOB_RUN_NUMBER",
+    "JOB_ID",
+    "JOB_RUN_DATE",
+    "JOB_RUN_QUEUED_AT",
+    "JOB_RUN_STARTED_AT",
+    "JOB_RUN_STOPPED_AT",
+    "JOB_BUILD_STATUS",
+    "RESOURCE_CLASS",
+    "OPERATING_SYSTEM",
+    "EXECUTOR",
+    "PARALLELISM",
+    "JOB_RUN_SECONDS",
+    "MEDIAN_CPU_UTILIZATION_PCT",
+    "MAX_CPU_UTILIZATION_PCT",
+    "MEDIAN_RAM_UTILIZATION_PCT",
+    "MAX_RAM_UTILIZATION_PCT",
+    "COMPUTE_CREDITS",
+    "DLC_CREDITS",
+    "USER_CREDITS",
+    "STORAGE_CREDITS",
+    "NETWORK_CREDITS",
+    "LEASE_CREDITS",
+    "LEASE_OVERAGE_CREDITS",
+    "IPRANGES_CREDITS",
+    "TOTAL_CREDITS"
+]
 
 
 class bcolors:
@@ -44,8 +97,8 @@ def eprint(*args, color=bcolors.OKCYAN):
             repacked_args.append(arg)
 
     print(color, end="", file=sys.stderr)
-    print(*repacked_args, file=sys.stderr)
-    print(bcolors.ENDC, end="", file=sys.stderr)
+    print(*repacked_args, end="", file=sys.stderr)
+    print(bcolors.ENDC, file=sys.stderr)
 
 
 def json_dumps(x, **kwargs):
@@ -117,7 +170,7 @@ def download_report(start_date_time_string, end_date_time_string, download_url):
     e = re.sub(r"[:-]", "_", end_date_time_string)
 
     file_name = urlparse(download_url).path.split('/')[-1]
-    file_path = f"/tmp/cci-usage--{s}-{e}--{file_name}"
+    file_path = f"/tmp/cci-usage--raw--{s}-{e}--{file_name}"
 
     eprint(f"download_report [{file_name}]: downloading...")
     with open(file_path, mode="wb") as f:
@@ -128,6 +181,47 @@ def download_report(start_date_time_string, end_date_time_string, download_url):
 
     eprint(f"download_report [{file_name}]:", file_path)
     return file_path
+
+
+def _parse_row(row):
+    assert set(EXPECTED_CSV_HEADERS) == set(row.keys()), f"Unexpected keys found for row: {json_dumps(row)}"
+
+    for k, v in list(row.items()):
+        if "\\N" == v:
+            row[k] = None
+    return row
+
+
+def _parse_downloaded_report_to_standard_csv(downloaded_file_path):
+    """
+    Returns a generator of parsed csv lines.
+
+    Due to the general size of some of the downloaded files, we have to use a generator here
+    otherwise we run the risk of OOM'ing _pretty quickly_.
+    """
+    with gzip.open(downloaded_file_path, "rt") as f:
+        for row in csv.DictReader(f, quoting=csv.QUOTE_NONE, escapechar="\\"):
+            yield _parse_row(row)
+
+
+def _write_standard_csv_to_cleansed_file_path(downloaded_file_path, dicts):
+    file_name = re.match(r".*cci-usage--raw--(.*)", downloaded_file_path).group(1)
+    file_path = f"./cci-usage--cleansed--{file_name}"
+
+    with gzip.open(file_path, "wt") as f:
+        writer = csv.DictWriter(f, fieldnames=EXPECTED_CSV_HEADERS)
+        writer.writeheader()
+        for d in dicts:
+            writer.writerow(d)
+
+    return file_path
+
+
+def cleanse_downloaded_report_to_standard_csv(downloaded_file_path):
+    return _write_standard_csv_to_cleansed_file_path(
+        downloaded_file_path,
+        _parse_downloaded_report_to_standard_csv(downloaded_file_path)
+    )
 
 
 def main():
@@ -166,7 +260,8 @@ def main():
         for download_url in download_urls
     ]
 
-    print(report_local_paths)
+    for downloaded_file_path in report_local_paths:
+        print(cleanse_downloaded_report_to_standard_csv(downloaded_file_path))
 
     return 0
 
