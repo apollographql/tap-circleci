@@ -18,10 +18,7 @@ from urllib.parse import urlparse
 dotenv.load_dotenv()
 
 
-HEADERS = {
-    "content-type": "application/json",
-    "Circle-Token": os.getenv('CCI_PAT')
-}
+HEADERS = {"content-type": "application/json", "Circle-Token": os.getenv("CCI_PAT")}
 
 EXPECTED_CSV_HEADERS = [
     "ORGANIZATION_ID",
@@ -71,20 +68,20 @@ EXPECTED_CSV_HEADERS = [
     "LEASE_CREDITS",
     "LEASE_OVERAGE_CREDITS",
     "IPRANGES_CREDITS",
-    "TOTAL_CREDITS"
+    "TOTAL_CREDITS",
 ]
 
 
 class bcolors:
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKCYAN = '\033[96m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
+    HEADER = "\033[95m"
+    OKBLUE = "\033[94m"
+    OKCYAN = "\033[96m"
+    OKGREEN = "\033[92m"
+    WARNING = "\033[93m"
+    FAIL = "\033[91m"
+    ENDC = "\033[0m"
+    BOLD = "\033[1m"
+    UNDERLINE = "\033[4m"
 
 
 def eprint(*args, color=bcolors.OKCYAN):
@@ -102,19 +99,16 @@ def eprint(*args, color=bcolors.OKCYAN):
 
 
 def json_dumps(x, **kwargs):
-    return json.dumps(
-        x,
-        **kwargs,
-        sort_keys=True,
-        default=lambda o: str(o)
-    )
+    return json.dumps(x, **kwargs, sort_keys=True, default=lambda o: str(o))
 
 
-def create_report_request(org_id, shared_org_ids, start_date_time_string, end_date_time_string):
+def create_report_request(
+    org_id, shared_org_ids, start_date_time_string, end_date_time_string
+):
     payload = {
         "start": start_date_time_string,
         "end": end_date_time_string,
-        "shared_org_ids": shared_org_ids
+        "shared_org_ids": shared_org_ids,
     }
 
     eprint("create_report_request", payload)
@@ -122,7 +116,7 @@ def create_report_request(org_id, shared_org_ids, start_date_time_string, end_da
     response = requests.post(
         f"https://circleci.com/api/v2/organizations/{org_id}/usage_export_job",
         json=payload,
-        headers=HEADERS
+        headers=HEADERS,
     )
 
     response.raise_for_status()
@@ -143,7 +137,7 @@ def get_report_request(org_id, usage_export_job_id):
     while True:
         response = requests.get(
             f"https://circleci.com/api/v2/organizations/{org_id}/usage_export_job/{usage_export_job_id}",
-            headers=HEADERS
+            headers=HEADERS,
         )
 
         response.raise_for_status()
@@ -155,7 +149,9 @@ def get_report_request(org_id, usage_export_job_id):
         elif "failed" == response_json["state"]:
             raise Exception("Non success/continue status encountered", response_json)
 
-        eprint(f"get_report_request [{usage_export_job_id}]: Sleeping for 15 seconds while we wait (currently '{response_json['state']}') to be completed...")
+        eprint(
+            f"get_report_request [{usage_export_job_id}]: Sleeping for 15 seconds while we wait (currently '{response_json['state']}') to be completed..."
+        )
         time.sleep(15)
 
     eprint("get_report_request:", response_json["download_urls"])
@@ -169,7 +165,7 @@ def download_report(start_date_time_string, end_date_time_string, download_url):
     s = re.sub(r"[:-]", "_", start_date_time_string)
     e = re.sub(r"[:-]", "_", end_date_time_string)
 
-    file_name = urlparse(download_url).path.split('/')[-1]
+    file_name = urlparse(download_url).path.split("/")[-1]
     file_path = f"/tmp/cci-usage--raw--{s}-{e}--{file_name}"
 
     eprint(f"download_report [{file_name}]: downloading...")
@@ -184,8 +180,6 @@ def download_report(start_date_time_string, end_date_time_string, download_url):
 
 
 def _parse_row(row):
-    assert set(EXPECTED_CSV_HEADERS) == set(row.keys()), f"Unexpected keys found for row: {json_dumps(row)}"
-
     for k, v in list(row.items()):
         if "\\N" == v:
             row[k] = None
@@ -209,8 +203,29 @@ def _write_standard_csv_to_cleansed_file_path(downloaded_file_path, dicts):
     file_path = f"./cci-usage--cleansed--{file_name}"
 
     with gzip.open(file_path, "wt") as f:
-        writer = csv.DictWriter(f, fieldnames=EXPECTED_CSV_HEADERS)
+        writer = csv.DictWriter(
+            f, fieldnames=EXPECTED_CSV_HEADERS, extrasaction="ignore"
+        )
         writer.writeheader()
+
+        first_element = next(dicts)
+        observed_keys = set(first_element.keys())
+        if set(EXPECTED_CSV_HEADERS) != observed_keys:
+            eprint(
+                f"Unexpected keys found for row: {first_element}", color=bcolors.WARNING
+            )
+            eprint(
+                f"+ {observed_keys - set(EXPECTED_CSV_HEADERS)}", color=bcolors.WARNING
+            )
+            eprint(
+                f"- {set(EXPECTED_CSV_HEADERS) - observed_keys}", color=bcolors.WARNING
+            )
+            eprint(
+                "Dropping these unexpected values/replacing with empty.",
+                color=bcolors.WARNING,
+            )
+        writer.writerow(first_element)
+
         for d in dicts:
             writer.writerow(d)
 
@@ -220,21 +235,23 @@ def _write_standard_csv_to_cleansed_file_path(downloaded_file_path, dicts):
 def cleanse_downloaded_report_to_standard_csv(downloaded_file_path):
     return _write_standard_csv_to_cleansed_file_path(
         downloaded_file_path,
-        _parse_downloaded_report_to_standard_csv(downloaded_file_path)
+        _parse_downloaded_report_to_standard_csv(downloaded_file_path),
     )
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-a", "--start_date_time_string", type=str, help="YYYY-MM-DDT00:00:00Z")
+    parser.add_argument(
+        "-a", "--start_date_time_string", type=str, help="YYYY-MM-DDT00:00:00Z"
+    )
     parser.add_argument(
         "-b",
         "--end_date_time_string",
         type=str,
         help="YYYY-MM-DDT00:00:00Z",
-        default=datetime.datetime.now().strftime("%Y-%m-%dT00:00:00Z")
+        default=datetime.datetime.now().strftime("%Y-%m-%dT00:00:00Z"),
     )
-    parser.add_argument("--verbose_format", action='store_true')
+    parser.add_argument("--verbose_format", action="store_true")
     parser.add_argument("org_id")
     parser.add_argument("shared_org_ids", nargs="*", default=[])
     args = parser.parse_args()
@@ -246,16 +263,11 @@ def main():
         args.end_date_time_string,
     )
 
-    download_urls = get_report_request(
-        args.org_id,
-        usage_export_job_id
-    )
+    download_urls = get_report_request(args.org_id, usage_export_job_id)
 
     report_local_paths = [
         download_report(
-            args.start_date_time_string,
-            args.end_date_time_string,
-            download_url
+            args.start_date_time_string, args.end_date_time_string, download_url
         )
         for download_url in download_urls
     ]
