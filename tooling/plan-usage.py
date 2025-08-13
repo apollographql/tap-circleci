@@ -37,7 +37,6 @@ EXPECTED_CSV_HEADERS = [
     "PIPELINE_ID",
     "PIPELINE_CREATED_AT",
     "PIPELINE_NUMBER",
-    "IS_DEFAULT_BRANCH",
     "IS_UNREGISTERED_USER",
     "PIPELINE_TRIGGER_SOURCE",
     "PIPELINE_TRIGGER_USER_ID",
@@ -185,8 +184,6 @@ def download_report(start_date_time_string, end_date_time_string, download_url):
 
 
 def _parse_row(row):
-    assert set(EXPECTED_CSV_HEADERS) == set(row.keys()), f"Unexpected keys found for row: {json_dumps(row)}"
-
     for k, v in list(row.items()):
         if "\\N" == v:
             row[k] = None
@@ -212,6 +209,14 @@ def _write_standard_csv_to_cleansed_file_path(downloaded_file_path, dicts):
     with gzip.open(file_path, "wt") as f:
         writer = csv.DictWriter(f, fieldnames=EXPECTED_CSV_HEADERS)
         writer.writeheader()
+
+        observed_keys = set(dicts[0].keys())
+        if set(EXPECTED_CSV_HEADERS) != observed_keys:
+            eprint(f"Unexpected keys found for row: {dicts[0]}", color=bcolors.WARNING)
+            eprint(f"+ {observed_keys - set(EXPECTED_CSV_HEADERS)}", color=bcolors.WARNING)
+            eprint(f"- {set(EXPECTED_CSV_HEADERS) - observed_keys}", color=bcolors.WARNING)
+            eprint(f"Dropping these unexpected values/replacing with empty.", color=bcolors.WARNING)
+
         for d in dicts:
             writer.writerow(d)
 
