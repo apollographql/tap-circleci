@@ -194,7 +194,9 @@ def _parse_downloaded_report_to_standard_csv(downloaded_file_path):
     otherwise we run the risk of OOM'ing _pretty quickly_.
     """
     with gzip.open(downloaded_file_path, "rt") as f:
-        for row in csv.DictReader(f, quoting=csv.QUOTE_NONE, escapechar="\\"):
+        dialect = csv.Sniffer().sniff(f.read(1024))
+        f.seek(0)
+        for row in csv.DictReader(f, dialect=dialect):
             yield _parse_row(row)
 
 
