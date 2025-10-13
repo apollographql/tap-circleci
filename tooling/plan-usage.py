@@ -1,6 +1,6 @@
 import argparse
 import csv
-import datetime
+from datetime import datetime, timedelta
 import dotenv
 import gzip
 import json
@@ -13,10 +13,14 @@ import traceback
 from urllib.parse import urlparse
 
 # https://circleci.com/docs/api/v2/index.html#tag/Usage
+# And of course, the actual limitations on the API are at a different link,
+# and the API itself _does not_ bubble up errors, just simply says 4XX :shrug:
+# https://support.circleci.com/hc/en-us/articles/28730291589403-How-to-use-the-CircleCI-v2-API-to-create-and-retrieve-usage-reports
 
 
 dotenv.load_dotenv()
 
+DATETIME_FORMAT = "%Y-%m-%dT00:00:00Z"
 
 HEADERS = {"content-type": "application/json", "Circle-Token": os.getenv("CCI_PAT")}
 
@@ -100,6 +104,32 @@ def eprint(*args, color=bcolors.OKCYAN):
 
 def json_dumps(x, **kwargs):
     return json.dumps(x, **kwargs, sort_keys=True, default=lambda o: str(o))
+
+
+def start_end_dates_to_chunks_of_32_days(start_date_time_string, end_date_time_string):
+    eprint("Chunking start/end dates:", start_date_time_string, end_date_time_string)
+
+    start = datetime.strptime(start_date_time_string, DATETIME_FORMAT)
+    # 13 months of historical data is available
+    if start < (datetime.now() - timedelta(days=30*13)):
+        eprint(f"Possible error encountered: Only 13 months of historical data are available, ie: {(datetime.now() - timedelta(days=30*13))}", start, bcolors.WARNING)
+
+    end = datetime.strptime(end_date_time_string, DATETIME_FORMAT)
+
+    while start < end:
+        # Max date window of 32 days
+        next_start = start + timedelta(days=31)
+
+        window = (
+            start.strftime(DATETIME_FORMAT),
+            min(end, next_start).strftime(DATETIME_FORMAT)
+        )
+
+        eprint("Start/end window:", window)
+
+        yield window
+
+        start = next_start
 
 
 def create_report_request(
@@ -251,31 +281,32 @@ def main():
         "--end_date_time_string",
         type=str,
         help="YYYY-MM-DDT00:00:00Z",
-        default=datetime.datetime.now().strftime("%Y-%m-%dT00:00:00Z"),
+        default=datetime.now().strftime(DATETIME_FORMAT),
     )
     parser.add_argument("--verbose_format", action="store_true")
     parser.add_argument("org_id")
     parser.add_argument("shared_org_ids", nargs="*", default=[])
     args = parser.parse_args()
 
-    usage_export_job_id = create_report_request(
-        args.org_id,
-        args.shared_org_ids,
-        args.start_date_time_string,
-        args.end_date_time_string,
-    )
-
-    download_urls = get_report_request(args.org_id, usage_export_job_id)
-
-    report_local_paths = [
-        download_report(
-            args.start_date_time_string, args.end_date_time_string, download_url
+    for start_date_time_string, end_date_time_string in start_end_dates_to_chunks_of_32_days(args.start_date_time_string, args.end_date_time_string):
+        usage_export_job_id = create_report_request(
+            args.org_id,
+            args.shared_org_ids,
+            start_date_time_string,
+            end_date_time_string
         )
-        for download_url in download_urls
-    ]
 
-    for downloaded_file_path in report_local_paths:
-        print(cleanse_downloaded_report_to_standard_csv(downloaded_file_path))
+        download_urls = get_report_request(args.org_id, usage_export_job_id)
+
+        report_local_paths = [
+            download_report(
+                start_date_time_string, end_date_time_string, download_url
+            )
+            for download_url in download_urls
+        ]
+
+        for downloaded_file_path in report_local_paths:
+            print(cleanse_downloaded_report_to_standard_csv(downloaded_file_path))
 
     return 0
 
